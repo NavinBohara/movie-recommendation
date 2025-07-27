@@ -8,6 +8,7 @@ from flask import Flask, render_template, request, jsonify
 import json
 from functools import lru_cache
 import time
+import os
 
 app = Flask(__name__)
 
@@ -158,4 +159,9 @@ if __name__ == '__main__':
     print("Movie Recommender System initialized successfully!")
     print(f"Loaded {len(movies)} movies and {len(ratings)} ratings")
     print(f"Available users: {len(user_movie_matrix.index)}")
-    app.run(debug=True, port=5001)
+    
+    # Get port from environment variable (for production) or use default
+    port = int(os.environ.get('PORT', 5001))
+    
+    # Run in production mode
+    app.run(host='0.0.0.0', port=port, debug=False)
