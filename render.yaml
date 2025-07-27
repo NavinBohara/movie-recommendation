@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app_render:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    startCommand: gunicorn app_render_full:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
