@@ -1,4 +1,4 @@
-# app.py
+# app_simple.py - Simplified version for deployment
 
 import pandas as pd
 import numpy as np
@@ -6,23 +6,26 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from flask import Flask, render_template, request, jsonify
 import json
-from functools import lru_cache
 import time
 import os
 
 app = Flask(__name__)
 
-# Global variables to store data
+# Global variables
 movies = None
 ratings = None
 user_movie_matrix = None
 content_similarity = None
 movie_indices = None
 user_similarity_df = None
+data_loaded = False
 
 def load_data():
-    """Load and preprocess data"""
-    global movies, ratings, user_movie_matrix, content_similarity, movie_indices, user_similarity_df
+    """Load data on demand"""
+    global movies, ratings, user_movie_matrix, content_similarity, movie_indices, user_similarity_df, data_loaded
+    
+    if data_loaded:
+        return
     
     try:
         print("Loading data...")
@@ -51,6 +54,7 @@ def load_data():
         user_similarity = cosine_similarity(user_movie_matrix_filled)
         user_similarity_df = pd.DataFrame(user_similarity, index=user_movie_matrix.index, columns=user_movie_matrix.index)
         
+        data_loaded = True
         print("Movie Recommender System initialized successfully!")
         print(f"Loaded {len(movies)} movies and {len(ratings)} ratings")
         print(f"Available users: {len(user_movie_matrix.index)}")
@@ -59,41 +63,23 @@ def load_data():
         print(f"Error loading data: {e}")
         raise e
 
-# Load data on startup
-load_data()
-
-# ===== Cache for better performance =====
-@lru_cache(maxsize=128)
-def get_cached_user_ratings(user_id):
-    """Cache user ratings to avoid repeated computation"""
-    try:
-        user_ratings = user_movie_matrix.loc[user_id].dropna()
-        return user_ratings
-    except:
-        return pd.Series()
-
-@lru_cache(maxsize=128)
-def get_cached_similar_users(user_id):
-    """Cache similar users computation"""
-    try:
-        similar_users = user_similarity_df[user_id].sort_values(ascending=False)[1:11]  # Top 10 similar users
-        return similar_users
-    except:
-        return pd.Series()
-
-# ===== Optimized Hybrid Recommendation Function =====
 def get_hybrid_recommendations(user_id, top_n=3):
+    """Get hybrid recommendations"""
     start_time = time.time()
     
     try:
-        # Get cached user ratings
-        user_ratings = get_cached_user_ratings(user_id)
+        # Load data if not loaded
+        if not data_loaded:
+            load_data()
+        
+        # Get user ratings
+        user_ratings = user_movie_matrix.loc[user_id].dropna()
         
         if user_ratings.empty:
             return []
         
-        # Get cached similar users
-        similar_users = get_cached_similar_users(user_id)
+        # Get similar users
+        similar_users = user_similarity_df[user_id].sort_values(ascending=False)[1:11]
         
         # Initialize scores dictionary
         scores = {}
@@ -103,16 +89,14 @@ def get_hybrid_recommendations(user_id, top_n=3):
         rated_movies = set(user_ratings.index)
         unrated_movies = all_movies - rated_movies
         
-        # Limit computation to top similar users and unrated movies
-        for movie in user_ratings.index[:10]:  # Limit to top 10 rated movies for efficiency
+        # Compute recommendations
+        for movie in user_ratings.index[:10]:
             try:
                 idx = movie_indices[movie]
                 content_scores = content_similarity[idx]
                 
-                # Get collaborative scores from similar users
                 collab_scores = user_movie_matrix.loc[similar_users.index].fillna(0).T.dot(similar_users)
                 
-                # Combine scores for unrated movies only
                 for i, content_score in enumerate(content_scores):
                     title = movies.iloc[i]['title']
                     if title in unrated_movies:
@@ -123,9 +107,7 @@ def get_hybrid_recommendations(user_id, top_n=3):
             except (KeyError, IndexError):
                 continue
         
-        # Sort and return top recommendations
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        
         print(f"Recommendation computation time: {time.time() - start_time:.3f} seconds")
         return sorted_scores[:top_n]
         
@@ -134,8 +116,12 @@ def get_hybrid_recommendations(user_id, top_n=3):
         return []
 
 def get_user_ratings(user_id):
+    """Get user ratings"""
     try:
-        user_ratings = get_cached_user_ratings(user_id)
+        if not data_loaded:
+            load_data()
+        
+        user_ratings = user_movie_matrix.loc[user_id].dropna()
         ratings_list = []
         
         for movie, rating in user_ratings.items():
@@ -151,7 +137,10 @@ def get_user_ratings(user_id):
 
 @app.route('/')
 def index():
+    """Main page"""
     try:
+        if not data_loaded:
+            load_data()
         user_ids = list(user_movie_matrix.index)
         return render_template('index.html', user_ids=user_ids)
     except Exception as e:
@@ -159,6 +148,7 @@ def index():
 
 @app.route('/get_recommendations', methods=['POST'])
 def get_recommendations():
+    """Get recommendations endpoint"""
     try:
         user_id = int(request.form['user_id'])
         recommendations = get_hybrid_recommendations(user_id, 3)
@@ -178,6 +168,7 @@ def get_recommendations():
 
 @app.route('/get_user_ratings', methods=['POST'])
 def get_user_ratings_route():
+    """Get user ratings endpoint"""
     try:
         user_id = int(request.form['user_id'])
         ratings = get_user_ratings(user_id)
@@ -187,12 +178,9 @@ def get_user_ratings_route():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint for deployment platforms"""
+    """Health check endpoint"""
     return jsonify({'status': 'healthy', 'message': 'Movie Recommender System is running'})
 
 if __name__ == '__main__':
-    # Get port from environment variable (for production) or use default
     port = int(os.environ.get('PORT', 5001))
-    
-    # Run in production mode
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False) 
